@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tweet Gallery</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:      #08090b;
+    --card-bg: #111318;
+    --border:  rgba(255,255,255,0.08);
+    --accent:  #63d2ff;
+    --glow:    rgba(99,210,255,0.25);
+    --gap:     10px;
+    --radius:  8px;
+    --spring:  cubic-bezier(0.34,1.2,0.64,1);
+  }
+
+  html, body {
+    width: 100%;
+    height: 100vh;
+    overflow: hidden;
+    background: var(--bg);
+    font-family: 'DM Mono', monospace;
+  }
+
+  /* grain overlay */
+  body::after {
+    content: ''; position: fixed; inset: 0;
+    pointer-events: none; z-index: 9999; opacity: 0.02;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* ── GRID: 4 cols × 5 rows = 20 cards, fills 100vh, zero gaps, readable ── */
+  #gallery {
+    padding: var(--gap);
+    width: 100%;
+    height: 100vh;
+    box-sizing: border-box;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(5, 1fr);
+    gap: var(--gap);
+    overflow: hidden;
+  }
+
+  /* ── CARD ── */
+  .card {
+    position: relative;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--card-bg);
+    overflow: hidden;
+    cursor: pointer;
+    opacity: 0; transform: translateY(6px);
+    animation: cardIn 0.35s ease forwards;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .card:hover {
+    border-color: rgba(99,210,255,0.25);
+    box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+  }
+  @keyframes cardIn { to { opacity: 1; transform: none; } }
+
+  .card img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: top;
+    display: block;
+    pointer-events: none;
+  }
+
+  /* shimmer while loading */
+  .card.loading::before {
+    content: ''; position: absolute; inset: 0; z-index: 1;
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.05) 50%, transparent 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite;
+  }
+  @keyframes shimmer {
+    from { background-position: -200% 0; }
+    to   { background-position:  200% 0; }
+  }
+
+  .card.broken img { opacity: 0; min-height: 60px; }
+  .card.broken::after {
+    content: 'image not found';
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; color: rgba(255,255,255,0.12); letter-spacing: .08em;
+  }
+
+  /* employee badge — top right */
+  .badge {
+    position: absolute; top: 7px; right: 7px;
+    font-size: 7px; font-weight: 500;
+    color: #000; background: var(--accent);
+    letter-spacing: 0.12em; padding: 2px 6px;
+    border-radius: 3px; text-transform: uppercase;
+    white-space: nowrap;
+    box-shadow: 0 0 8px rgba(99,210,255,0.8), 0 0 20px rgba(99,210,255,0.3);
+    pointer-events: none; z-index: 4;
+  }
+  .badge:empty { display: none; }
+
+  /* ─────────────────────────────────────────
+     POPUP — shared by hover + click
+     608 × 595 fixed size as requested
+  ───────────────────────────────────────── */
+  #popup {
+    position: fixed;
+    z-index: 3000;
+    width: 608px;
+    max-height: 90vh;
+    overflow-y: auto;
+    scrollbar-width: none;
+    pointer-events: none;
+    border-radius: 12px;
+    border: 1.5px solid var(--accent);
+    box-shadow: 0 20px 70px rgba(0,0,0,0.95), 0 0 50px var(--glow);
+    background: var(--card-bg);
+    opacity: 0;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%) scale(0.94);
+    transition: opacity 0.15s ease, transform 0.18s var(--spring);
+    will-change: opacity, transform;
+  }
+  #popup::-webkit-scrollbar { display: none; }
+  #popup.visible {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  /* when pinned (click), allow pointer events and show close btn */
+  #popup.pinned {
+    pointer-events: auto;
+    transform: translate(-50%, -50%) scale(1) !important;
+  }
+  #popup img {
+    width: 100%; height: auto;
+    display: block; pointer-events: none;
+    max-height: 560px; object-fit: contain;
+  }
+  #popup .pop-badge {
+    position: absolute; top: 9px; right: 42px;
+    font-size: 7px; font-weight: 500;
+    color: #000; background: var(--accent);
+    letter-spacing: .12em; padding: 2px 6px;
+    border-radius: 3px; text-transform: uppercase;
+    box-shadow: 0 0 8px rgba(99,210,255,0.8);
+    z-index: 5;
+  }
+  #popup .pop-close {
+    display: none;
+    position: absolute; top: 8px; right: 8px;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: rgba(8,9,11,0.9);
+    border: 1.5px solid var(--accent);
+    color: var(--accent); font-size: 11px;
+    line-height: 24px; text-align: center;
+    cursor: pointer; z-index: 6;
+    font-family: 'DM Mono', monospace;
+    transition: background .12s;
+  }
+  #popup.pinned .pop-close { display: block; }
+  #popup .pop-close:hover  { background: var(--accent); color: #000; }
+  #popup .pop-hint {
+    padding: 7px 10px 9px;
+    font-size: 8.5px; color: rgba(255,255,255,0.22);
+    letter-spacing: .07em; text-align: center;
+  }
+
+  /* ── CLICK INTERCEPTOR OVERLAY ──
+     Sits invisibly over the entire popup, above all content but below close btn.
+     Catches every click/dblclick, prevents text selection completely. */
+  #pop-overlay {
+    display: none;
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    background: transparent;
+  }
+  #popup.pinned #pop-overlay { display: block; }
+  /* bump close button above overlay */
+  #popup .pop-close { z-index: 20 !important; }
+
+  /* dim backdrop only when pinned */
+  #backdrop {
+    display: none;
+    position: fixed; inset: 0; z-index: 2999;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    cursor: pointer;
+  }
+  #backdrop.on { display: block; }
+</style>
+</head>
+<body>
+
+<div id="backdrop"></div>
+
+<div id="popup">
+  <img id="pop-img" src="" alt="">
+  <div class="pop-badge" id="pop-badge"></div>
+  <div class="pop-close" id="pop-close">✕</div>
+  <div class="pop-hint" id="pop-hint">click to pin · double-click to open tweet ↗</div>
+  <div id="pop-overlay"></div>
+</div>
+
+<div id="gallery"></div>
+
+<script>
+// ── DATA (from Gold_vault11.xlsx) ──────────────────────────────────────────
+// Removed 3 tweets (ku1deep, Share_Market, mohitb999) — 20 remain → 4×5 grid, no gaps
+const TWEETS = [
+  { url: "https://x.com/sunilgurjar01/status/2049749211709878720?s=20",   img: "2026-05-07_11-55.png",   emp: "" },
+  { url: "https://x.com/Sanjeevslr/status/2051336781396935104?s=20",       img: "2026-05-07_11-59.png",   emp: "" },
+  { url: "https://x.com/ipo_mantra/status/2049769477441765653?s=20",       img: "2026-05-07_12-00.png",   emp: "" },
+  { url: "https://x.com/Akveq_/status/2049809799634981080?s=20",           img: "2026-05-07_12-00_1.png", emp: "" },
+  { url: "https://x.com/KhapreVishal/status/2049819432302882862?s=20",     img: "2026-05-07_12-01.png",   emp: "" },
+  { url: "https://x.com/hardik__more/status/2049731997040541753?s=20",     img: "2026-05-07_15-31.png",   emp: "Employee" },
+  { url: "https://x.com/rishabhanalyst/status/2049739782146937070?s=20",   img: "2026-05-07_12-03_1.png", emp: "" },
+  { url: "https://x.com/prikulkarni/status/2049732736261456314?s=20",      img: "2026-05-07_12-07.png",   emp: "Employee" },
+  { url: "https://x.com/JayminSOfficial/status/2052027103726674116?s=20",  img: "2026-05-07_12-10.png",   emp: "" },
+  { url: "https://x.com/piyushchaudhry/status/2049893246382596361?s=20",   img: "2026-05-07_12-11.png",   emp: "" },
+  { url: "https://x.com/shraddhahahaha/status/2049845891255980172?s=20",   img: "2026-05-07_12-13.png",   emp: "Employee" },
+  { url: "https://x.com/justnottamomma/status/2049812620815863902?s=20",   img: "2026-05-07_12-14.png",   emp: "" },
+  { url: "https://x.com/kyalashish/status/2049793858855477522?s=20",       img: "2026-05-07_12-16.png",   emp: "" },
+  { url: "https://x.com/dhirajsinha/status/2050458568629817504?s=20",      img: "2026-05-07_12-18.png",   emp: "" },
+  { url: "https://x.com/DevendraDate1/status/2049725632641433677?s=20",    img: "2026-05-07_12-20.png",   emp: "Employee" },
+  { url: "https://x.com/AdeParimal/status/2050161071043105259?s=20",       img: "preview.webp",           emp: "" },
+  { url: "https://x.com/sourabhsiso19/status/2049798726357778506?s=20",    img: "00.webp",                emp: "" },
+  { url: "https://x.com/iMicrocap/status/2050190166397235236?s=20",        img: "99.webp",                emp: "" },
+  { url: "https://x.com/kevalgalaX/status/2049855547072282921?s=20",       img: "2026-05-07_15-57.png",   emp: "" },
+  { url: "https://x.com/CaVivekkhatri/status/2049827509580210276?s=20",    img: "2026-05-07_16-02.png",   emp: "" },
+];
+
+// ── POPUP ELEMENTS ─────────────────────────────────────────────────────────
+const popup    = document.getElementById('popup');
+const popImg   = document.getElementById('pop-img');
+const popBadge = document.getElementById('pop-badge');
+const popClose = document.getElementById('pop-close');
+const popHint  = document.getElementById('pop-hint');
+const backdrop = document.getElementById('backdrop');
+
+const POP_W = 608;  // desired popup width
+const POP_H = 595;  // max popup height
+
+let pinned      = false;
+let hoverTimer  = null;
+let activeTweet = null;
+
+// Popup always centred in the viewport
+function placePopup(card) {
+  popup.style.left = '50%';
+  popup.style.top  = '50%';
+  popup.style.transform = 'translate(-50%, -50%) scale(1)';
+}
+
+function loadPopup(t) {
+  popImg.src = t.img;
+  popImg.alt = t.emp || 'tweet';
+  popBadge.textContent  = t.emp;
+  popBadge.style.display = t.emp ? 'block' : 'none';
+  activeTweet = t;
+}
+
+function showPopup(card, t) {
+  loadPopup(t);
+  placePopup(card);
+  popup.classList.add('visible');
+}
+
+function hidePopup() {
+  popup.classList.remove('visible', 'pinned');
+  backdrop.classList.remove('on');
+  popHint.textContent = 'click to pin · double-click to open tweet ↗';
+  pinned = false;
+  activeTweet = null;
+}
+
+function pinPopup(card, t) {
+  loadPopup(t);
+  placePopup(card);
+  popup.classList.add('visible', 'pinned');
+  backdrop.classList.add('on');
+  popHint.textContent = 'double-click anywhere to open tweet ↗';
+  pinned = true;
+}
+
+// close button — must stop propagation so overlay doesn't also catch it
+popClose.addEventListener('click', e => { e.stopPropagation(); hidePopup(); });
+
+// ── POP OVERLAY: intercepts ALL clicks on the pinned popup ──
+// Single click → close (with timer so dblclick can cancel)
+// Double click → open tweet in new tab
+const popOverlay = document.getElementById('pop-overlay');
+let popOverlayTimer = null;
+
+popOverlay.addEventListener('mousedown', e => {
+  // Prevent any text selection starting on mousedown
+  e.preventDefault();
+});
+popOverlay.addEventListener('click', e => {
+  e.stopPropagation();
+  clearTimeout(popOverlayTimer);
+  popOverlayTimer = setTimeout(() => hidePopup(), 250);
+});
+popOverlay.addEventListener('dblclick', e => {
+  e.preventDefault();
+  e.stopPropagation();
+  clearTimeout(popOverlayTimer);      // cancel the close
+  window.getSelection()?.removeAllRanges();
+  if (activeTweet?.url) window.open(activeTweet.url, '_blank');
+});
+
+// ── BACKDROP: single click closes, double click opens tweet ──
+let backdropClickTimer = null;
+backdrop.addEventListener('mousedown', e => { e.preventDefault(); });
+backdrop.addEventListener('click', () => {
+  clearTimeout(backdropClickTimer);
+  backdropClickTimer = setTimeout(() => hidePopup(), 250);
+});
+backdrop.addEventListener('dblclick', e => {
+  e.preventDefault();
+  clearTimeout(backdropClickTimer);
+  window.getSelection()?.removeAllRanges();
+  if (activeTweet?.url) window.open(activeTweet.url, '_blank');
+});
+
+// ESC closes
+document.addEventListener('keydown', e => { if (e.key === 'Escape') hidePopup(); });
+
+// ── MASONRY GRID (CSS columns — no JS height guessing) ────────────────────
+const gallery = document.getElementById('gallery');
+
+TWEETS.forEach((t, idx) => {
+  const card = document.createElement('div');
+  card.className = 'card loading';
+  card.style.animationDelay = (idx * 0.035) + 's';
+
+  const badge = document.createElement('div');
+  badge.className = 'badge';
+  badge.textContent = t.emp;
+
+  const img = document.createElement('img');
+  img.loading = 'lazy';
+  img.alt = t.emp || 'tweet';
+  img.src = t.img;
+
+  img.addEventListener('load',  () => card.classList.remove('loading'));
+  img.addEventListener('error', () => {
+    card.classList.remove('loading');
+    card.classList.add('broken');
+  });
+
+  // ── HOVER: show popup after short delay, hide on leave ──
+  card.addEventListener('mouseenter', () => {
+    if (pinned) return;
+    clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => showPopup(card, t), 120);
+  });
+  card.addEventListener('mouseleave', () => {
+    clearTimeout(hoverTimer);
+    if (!pinned) hidePopup();
+  });
+
+  // ── CLICK DISCRIMINATION: single vs double ──
+  // A double-click fires: click → click → dblclick
+  // Delay single-click action so dblclick can cancel it first.
+  let clickTimer = null;
+
+  card.addEventListener('click', e => {
+    clearTimeout(hoverTimer);
+    clearTimeout(clickTimer);
+    clickTimer = setTimeout(() => {
+      if (pinned && activeTweet === t) { hidePopup(); return; }
+      pinPopup(card, t);
+    }, 220);
+  });
+
+  // ── DOUBLE CLICK: open tweet in new tab ──
+  card.addEventListener('dblclick', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    clearTimeout(clickTimer);
+    clearTimeout(hoverTimer);
+    window.getSelection()?.removeAllRanges();
+    window.open(t.url, '_blank');
+  });
+
+  card.append(badge, img);
+  gallery.appendChild(card);
+});
+</script>
+</body>
+</html>
